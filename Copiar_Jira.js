@@ -78,8 +78,22 @@ javascript:(async()=>{
 		}
 	};
 
-	const mostrarResumen=(resumenTexto,resumenFilas,resumenEstado)=>{
+	const bancos=[
+		{nombre:'Sabadell',prefijo:'BSD'},
+		{nombre:'Santander',prefijo:'BCH'},
+		{nombre:'BBVA',prefijo:'BBV'}
+	];
+	const bancoDeCodigo=(codigo)=>{
+		const limpio=(codigo||'').trim().toUpperCase();
+		const banco=bancos.find((b)=>limpio.startsWith(b.prefijo));
+		return banco?banco.nombre:null;
+	};
+
+	const mostrarResumen=(movimientos,resumenEstado)=>{
 		cerrarModalExistente();
+		let resumenTexto='';
+		const disponibles=bancos.filter((b)=>movimientos.some((m)=>m.banco===b.nombre));
+		const activos=new Set(disponibles.map((b)=>b.nombre));
 
 		const overlay=document.createElement('div');
 		overlay.id='__copiar_jira_resumen__';
@@ -109,30 +123,37 @@ javascript:(async()=>{
 		titulo.style.fontSize='22px';
 		modal.appendChild(titulo);
 
-		if(resumenFilas.length){
-			const tabla=document.createElement('table');
-			tabla.style.width='100%';
-			tabla.style.borderCollapse='collapse';
-			tabla.style.marginBottom='18px';
-
-			const cabecera=document.createElement('thead');
-			cabecera.innerHTML='<tr><th style="text-align:left;padding:0 0 10px;border-bottom:1px solid #cbd5e1;">Moneda</th><th style="text-align:right;padding:0 0 10px;border-bottom:1px solid #cbd5e1;">Total</th></tr>';
-			tabla.appendChild(cabecera);
-
-			const cuerpo=document.createElement('tbody');
-			for(const fila of resumenFilas){
-				const tr=document.createElement('tr');
-				tr.innerHTML=`<td style="padding:10px 0;border-bottom:1px solid #e2e8f0;font-weight:600;">${fila.moneda}</td><td style="padding:10px 0;border-bottom:1px solid #e2e8f0;text-align:right;font-variant-numeric:tabular-nums;">${fila.total}</td>`;
-				cuerpo.appendChild(tr);
-			}
-			tabla.appendChild(cuerpo);
-			modal.appendChild(tabla);
-		}else{
-			const vacio=document.createElement('p');
-			vacio.textContent='No se detectaron importes y monedas v\u00e1lidos en las l\u00edneas copiadas.';
-			vacio.style.margin='0 0 18px';
-			modal.appendChild(vacio);
+		const filtros=document.createElement('div');
+		filtros.style.display='flex';
+		filtros.style.gap='8px';
+		filtros.style.marginBottom='16px';
+		const botonesBanco=new Map();
+		for(const banco of disponibles){
+			const boton=document.createElement('button');
+			boton.type='button';
+			boton.textContent=banco.nombre;
+			boton.style.borderRadius='999px';
+			boton.style.padding='7px 14px';
+			boton.style.fontWeight='600';
+			boton.style.fontSize='13px';
+			boton.style.cursor='pointer';
+			boton.addEventListener('click',()=>{
+				if(activos.has(banco.nombre)){
+					activos.delete(banco.nombre);
+				}else{
+					activos.add(banco.nombre);
+				}
+				render();
+			});
+			botonesBanco.set(banco.nombre,boton);
+			filtros.appendChild(boton);
 		}
+		if(disponibles.length){
+			modal.appendChild(filtros);
+		}
+
+		const contenedorTabla=document.createElement('div');
+		modal.appendChild(contenedorTabla);
 
 		const estado=document.createElement('p');
 		estado.textContent=resumenEstado;
@@ -149,14 +170,10 @@ javascript:(async()=>{
 
 		const botonCopiar=document.createElement('button');
 		botonCopiar.textContent='Copiar resumen';
-		botonCopiar.disabled=!resumenTexto;
 		botonCopiar.style.border='0';
 		botonCopiar.style.borderRadius='10px';
 		botonCopiar.style.padding='10px 14px';
 		botonCopiar.style.fontWeight='600';
-		botonCopiar.style.cursor=resumenTexto?'pointer':'not-allowed';
-		botonCopiar.style.background=resumenTexto?'#0f766e':'#cbd5e1';
-		botonCopiar.style.color=resumenTexto?'#ffffff':'#475569';
 
 		botonCopiar.addEventListener('click',async()=>{
 			if(!resumenTexto){
@@ -201,6 +218,58 @@ javascript:(async()=>{
 		acciones.appendChild(botonCopiar);
 		acciones.appendChild(botonCerrar);
 		modal.appendChild(acciones);
+		const render=()=>{
+			const sinFiltro=activos.size===0||activos.size===disponibles.length;
+			for(const [nombre,boton] of botonesBanco){
+				const on=activos.has(nombre);
+				boton.style.border=on?'1px solid #0f766e':'1px solid #cbd5e1';
+				boton.style.background=on?'#0f766e':'#ffffff';
+				boton.style.color=on?'#ffffff':'#475569';
+			}
+
+			const totales=new Map();
+			for(const mov of movimientos){
+				if(!sinFiltro&&!activos.has(mov.banco)){
+					continue;
+				}
+				totales.set(mov.moneda,(totales.get(mov.moneda)||0)+mov.importe);
+			}
+			const filas=Array.from(totales.entries())
+				.sort(([a],[b])=>a.localeCompare(b))
+				.map(([moneda,total])=>({moneda,total:formatImporte(total)}));
+			const nombresActivos=disponibles.filter((b)=>activos.has(b.nombre)).map((b)=>b.nombre);
+			const encabezado=sinFiltro?'Total de pagos:':`Pagos ${nombresActivos.join(' y ')}`;
+			resumenTexto=filas.length?`${encabezado}\n${filas.map((fila)=>`${fila.moneda}\t${fila.total}`).join('\n')}`:'';
+
+			contenedorTabla.textContent='';
+			if(filas.length){
+				const tabla=document.createElement('table');
+				tabla.style.width='100%';
+				tabla.style.borderCollapse='collapse';
+				tabla.style.marginBottom='18px';
+				tabla.innerHTML='<thead><tr><th style="text-align:left;padding:0 0 10px;border-bottom:1px solid #cbd5e1;">Moneda</th><th style="text-align:right;padding:0 0 10px;border-bottom:1px solid #cbd5e1;">Total</th></tr></thead>';
+				const cuerpo=document.createElement('tbody');
+				for(const fila of filas){
+					const tr=document.createElement('tr');
+					tr.innerHTML=`<td style="padding:10px 0;border-bottom:1px solid #e2e8f0;font-weight:600;">${fila.moneda}</td><td style="padding:10px 0;border-bottom:1px solid #e2e8f0;text-align:right;font-variant-numeric:tabular-nums;">${fila.total}</td>`;
+					cuerpo.appendChild(tr);
+				}
+				tabla.appendChild(cuerpo);
+				contenedorTabla.appendChild(tabla);
+			}else{
+				const vacio=document.createElement('p');
+				vacio.textContent='No se detectaron importes y monedas v\u00e1lidos para el filtro actual.';
+				vacio.style.margin='0 0 18px';
+				contenedorTabla.appendChild(vacio);
+			}
+
+			botonCopiar.disabled=!resumenTexto;
+			botonCopiar.style.cursor=resumenTexto?'pointer':'not-allowed';
+			botonCopiar.style.background=resumenTexto?'#0f766e':'#cbd5e1';
+			botonCopiar.style.color=resumenTexto?'#ffffff':'#475569';
+		};
+
+		render();
 		overlay.appendChild(modal);
 		document.body.appendChild(overlay);
 		document.addEventListener('keydown',onKeyDown);
@@ -227,27 +296,20 @@ javascript:(async()=>{
 	const salida=`### JIRA: ${jira}\n${resultado.join('\n')}`;
 	await navigator.clipboard.writeText(salida);
 
-	const totalesPorMoneda=new Map();
+	const movimientos=[];
 	for(const linea of resultado){
 		const extraido=extraerImporteYMoneda(linea);
 		if(!extraido){
 			continue;
 		}
 
-		totalesPorMoneda.set(
-			extraido.moneda,
-			(totalesPorMoneda.get(extraido.moneda)||0)+extraido.importe
-		);
+		movimientos.push({
+			...extraido,
+			banco:bancoDeCodigo(linea.split('\t')[5])
+		});
 	}
 
-	const resumenFilas=Array.from(totalesPorMoneda.entries())
-		.sort(([monedaA],[monedaB])=>monedaA.localeCompare(monedaB))
-		.map(([moneda,total])=>({
-			moneda,
-			total:formatImporte(total)
-		}));
-	const resumenTexto=resumenFilas.map((fila)=>`${fila.moneda}\t${fila.total}`).join('\n');
 	const resumenEstado=`Copiadas ${resultado.length} l\u00edneas. ${comentarios>0?`Detectadas ${comentarios} l\u00edneas en comentarios.`:'Sin movimientos en comentarios.'}`;
 
-	mostrarResumen(resumenTexto,resumenFilas,resumenEstado);
+	mostrarResumen(movimientos,resumenEstado);
 })();
